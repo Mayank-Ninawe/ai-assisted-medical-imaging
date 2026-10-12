@@ -24,6 +24,11 @@ __pycache__/
 .coverage
 coverage.xml
 htmlcov/
+# Python packaging metadata
+*.egg-info/
+.eggs/
+build/
+dist/
 
 # Jupyter temporary files and checkpoints
 .ipynb_checkpoints/
