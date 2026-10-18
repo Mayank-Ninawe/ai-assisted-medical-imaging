@@ -30,17 +30,16 @@ def test_compute_metrics_handles_label_without_positives():
 
 def test_compute_metrics_perfect_classifier():
     targets = torch.zeros(32, len(LABEL_COLUMNS))
-    targets[:, 1] = 1.0
+    targets[:16, 1] = 1.0
 
-    logits = torch.where(
-        targets.bool(),
-        torch.tensor(10.0),
-        torch.tensor(-10.0),
-    )
+    logits = torch.zeros(32, len(LABEL_COLUMNS))
+    logits[:16, 1] = 10.0
+    logits[16:, 1] = -10.0
 
     metrics = compute_metrics(logits, targets, threshold=0.5)
     cardiomegaly = metrics["per_label"]["Cardiomegaly"]
 
+    assert cardiomegaly["support_positive"] == 16
     assert cardiomegaly["auroc"] == 1.0
     assert cardiomegaly["average_precision"] == 1.0
     assert cardiomegaly["f1"] == 1.0
