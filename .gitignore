@@ -6,6 +6,7 @@ data/manifests/*.csv
 data/manifests/*.parquet
 models/*.pt
 models/classification/*.jsonl
+reports/*.csv
 models/*.pth
 models/*.ckpt
 models/**/*.pt
