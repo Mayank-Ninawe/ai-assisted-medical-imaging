@@ -24,6 +24,16 @@ The full NIH archive, extracted images, derived features, and trained model
 checkpoints must remain outside ordinary Git history.
 
 ## Workflow A — NIH ChestX-ray14 / CXR8
+### Measured local split counts
+
+After building the local manifest from the official NIH files:
+
+- Train/validation images: 86,524
+- Held-out test images: 25,596
+- Total images: 112,120
+- Extracted PNG images verified locally: 112,120
+
+These are measured counts from the local manifest, not estimates.
 
 ### Official source
 
