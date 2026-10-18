@@ -39,3 +39,4 @@ env/
 .dvc/cache/
 .dvc/tmp/
 .dvc/config.local
+reports/*.json
