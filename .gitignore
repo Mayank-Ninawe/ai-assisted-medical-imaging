@@ -10,6 +10,7 @@ reports/*.csv
 models/*.pth
 models/*.ckpt
 models/**/*.pt
+reports/
 models/**/*.pth
 models/**/*.ckpt
 

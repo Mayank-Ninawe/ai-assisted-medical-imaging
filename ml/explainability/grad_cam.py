@@ -13,7 +13,7 @@ import json
 import sys
 from pathlib import Path
 
-import matplotlib.cm as cm
+import matplotlib
 import numpy as np
 import torch
 import yaml
@@ -119,7 +119,7 @@ def create_overlay(
         dtype=np.float32,
     ) / 255.0
 
-    colormap = cm.get_cmap("jet")
+    colormap = matplotlib.colormaps["jet"]
     colored_heatmap = colormap(heatmap_resized)[..., :3]
 
     overlay = alpha * colored_heatmap + (1.0 - alpha) * original_rgb
@@ -168,9 +168,12 @@ def generate_grad_cam(
     from ml.classification.preprocessing import normalize_image
 
     image = resize_image(load_grayscale_image(image_path), size=size)
-    image_tensor = torch.from_numpy(
-        normalize_image(image, mean=image_config["normalize_mean"], std=image_config["normalize_std"])
-    ).to(device)
+    image_array = normalize_image(
+        image,
+        mean=image_config["normalize_mean"],
+        std=image_config["normalize_std"],
+    )
+    image_tensor = torch.from_numpy(image_array).to(device)
 
     grad_cam = GradCAM(model, model.features.denseblock4)
     try:
