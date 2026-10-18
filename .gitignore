@@ -1,82 +1,41 @@
-# Environment variables and local secrets
+# Large datasets, derived artifacts, and model weights
+data/raw/
+data/processed/
+data/cache/
+data/manifests/*.csv
+data/manifests/*.parquet
+models/*.pt
+models/*.pth
+models/*.ckpt
+models/**/*.pt
+models/**/*.pth
+models/**/*.ckpt
+
+# Compressed archives
+*.tar
+*.tar.gz
+*.zip
+
+# Local databases
+*.db
+*.sqlite3
+
+# Environment / Secrets
 .env
-.env.*
-!.env.example
-*.pem
-*.key
-secrets/
-credentials/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
 
 # Python virtual environments
 .venv/
 venv/
-ENV/
 env/
-.python-version
 
-# Python caches and test/coverage output
-__pycache__/
-*.py[cod]
-*$py.class
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-coverage.xml
-htmlcov/
-# Python packaging metadata
-*.egg-info/
-.eggs/
-build/
-dist/
-
-# Jupyter temporary files and checkpoints
-.ipynb_checkpoints/
-
-# Frontend dependencies and build output
-node_modules/
-dist/
-build/
-coverage/
-
-# Local datasets and medical images
-data/raw/
-data/external/
-data/interim/
-data/processed/
-*.dcm
-*.dicom
-*.nii
-*.nii.gz
-*.mha
-*.mhd
-*.nrrd
-
-# Model checkpoints and large model artifacts
-models/*
-!models/README.md
-*.pt
-*.pth
-*.ckpt
-*.onnx
-*.safetensors
-
-# Generated outputs and local reports
-outputs/
-runs/
-wandb/
-mlruns/
-reports/generated/
-reports/test-results/
-
-# Local databases and application state
-*.db
-*.sqlite
-*.sqlite3
-instance/
-
-# Logs and operating-system/editor files
-*.log
-.DS_Store
-Thumbs.db
-.vscode/
+# DVC local files
+.dvc/cache/
+.dvc/tmp/
+.dvc/config.local
