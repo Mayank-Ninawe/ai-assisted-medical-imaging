@@ -1,18 +1,19 @@
-"""Tests for the minimal classification API."""
+"""API tests with explicit separation of real-checkpoint dependencies."""
 
 from io import BytesIO
 from pathlib import Path
 
 import numpy as np
+import pytest
 import requests
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from backend.app.main import app, classification_service
+from backend.app.main import app, classification_service, explainability_service
 
 
 def _png_bytes() -> bytes:
-    image = Image.fromarray(np.zeros((32, 32), dtype=np.uint8), mode="L")
+    image = Image.fromarray(np.zeros((32, 32), dtype=np.uint8))
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
@@ -21,17 +22,48 @@ def _png_bytes() -> bytes:
 client = TestClient(app)
 
 
+@pytest.fixture
+def real_classification_checkpoint() -> Path:
+    path = classification_service.checkpoint_path
+    if not path.is_file():
+        pytest.skip(f"Real classification checkpoint is not available: {path}")
+    return path
+
+
+@pytest.fixture
+def real_explainability_checkpoint() -> Path:
+    path = explainability_service.checkpoint_path
+    if not path.is_file():
+        pytest.skip(f"Real Grad-CAM checkpoint is not available: {path}")
+    return path
+
+
+@pytest.fixture
+def bypass_model_loading(monkeypatch) -> None:
+    """Isolate input validation without pretending to run real inference."""
+    monkeypatch.setattr(classification_service, "_load_model", lambda: None)
+
+
 def test_health_endpoints() -> None:
-    assert client.get("/health").json() == {
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {
         "status": "ok",
         "service": "medical-imaging-api",
     }
+
+    available = classification_service.checkpoint_path.is_file()
     response = client.get("/health/models")
+
     assert response.status_code == 200
-    assert response.json()["classification_model_available"] is True
+    assert response.json()["classification_model_available"] is available
+    assert response.json()["status"] == ("ok" if available else "degraded")
 
 
-def test_classification_inference_uses_real_checkpoint() -> None:
+@pytest.mark.real_model
+def test_classification_inference_uses_real_checkpoint(
+    real_classification_checkpoint,
+) -> None:
     response = client.post(
         "/predict/classification",
         content=_png_bytes(),
@@ -46,7 +78,7 @@ def test_classification_inference_uses_real_checkpoint() -> None:
     assert all(0.0 <= item["probability"] <= 1.0 for item in body["predictions"])
 
 
-def test_classification_rejects_empty_image() -> None:
+def test_classification_rejects_empty_image(bypass_model_loading) -> None:
     response = client.post(
         "/predict/classification",
         content=b"",
@@ -57,7 +89,7 @@ def test_classification_rejects_empty_image() -> None:
     assert response.json()["detail"]["code"] == "invalid_image"
 
 
-def test_classification_rejects_corrupt_image() -> None:
+def test_classification_rejects_corrupt_image(bypass_model_loading) -> None:
     response = client.post(
         "/predict/classification",
         content=b"not an image",
@@ -83,25 +115,40 @@ def test_classification_rejects_oversized_upload(monkeypatch) -> None:
     assert response.json()["detail"]["code"] == "upload_too_large"
 
 
-def test_model_health_reports_missing_checkpoint(monkeypatch) -> None:
+def test_model_health_reports_missing_checkpoint(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         classification_service,
         "checkpoint_path",
-        Path("missing-classifier.pt"),
+        tmp_path / "missing-classifier.pt",
     )
-    try:
-        response = client.get("/health/models")
-        assert response.status_code == 200
-        assert response.json()["classification_model_available"] is False
-    finally:
-        monkeypatch.setattr(
-            classification_service,
-            "checkpoint_path",
-            Path("models/classification/best_classifier.pt"),
-        )
+
+    response = client.get("/health/models")
+
+    assert response.status_code == 200
+    assert response.json()["classification_model_available"] is False
+    assert response.json()["status"] == "degraded"
 
 
-def test_grad_cam_returns_controlled_overlay() -> None:
+def test_classification_reports_missing_checkpoint(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        classification_service,
+        "checkpoint_path",
+        tmp_path / "missing-classifier.pt",
+    )
+    monkeypatch.setattr(classification_service, "_model", None)
+
+    response = client.post(
+        "/predict/classification",
+        content=_png_bytes(),
+        headers={"content-type": "image/png"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "model_unavailable"
+
+
+@pytest.mark.real_model
+def test_grad_cam_returns_controlled_overlay(real_explainability_checkpoint) -> None:
     response = client.post(
         "/explainability/grad-cam?label=Cardiomegaly",
         content=_png_bytes(),
@@ -117,10 +164,22 @@ def test_grad_cam_returns_controlled_overlay() -> None:
     assert "overlay_path" not in body
 
 
-def test_grad_cam_rejects_unknown_label() -> None:
+@pytest.mark.real_model
+def test_grad_cam_rejects_unknown_label(real_explainability_checkpoint) -> None:
     response = client.post(
         "/explainability/grad-cam?label=Unknown",
         content=_png_bytes(),
+        headers={"content-type": "image/png"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_grad_cam_request"
+
+
+def test_grad_cam_rejects_empty_image() -> None:
+    response = client.post(
+        "/explainability/grad-cam?label=Cardiomegaly",
+        content=b"",
         headers={"content-type": "image/png"},
     )
 
