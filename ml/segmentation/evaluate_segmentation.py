@@ -15,7 +15,8 @@ import yaml
 from monai.data import DataLoader
 from monai.inferers import sliding_window_inference
 
-from ml.segmentation.model import create_spleen_unet, dice_score
+from ml.run_metadata import build_run_metadata
+from ml.segmentation.model import create_spleen_unet, dice_score, post_process_mask
 from ml.segmentation.preprocessing import IMAGE_KEY, LABEL_KEY, create_dataset
 
 
@@ -24,6 +25,7 @@ def evaluate_segmentation(
     checkpoint_path: Path,
     output_path: Path,
     validation_limit: int | None,
+    command: list[str] | None = None,
 ) -> dict:
     with config_path.open("r", encoding="utf-8") as handle:
         config = yaml.safe_load(handle)
@@ -44,7 +46,14 @@ def evaluate_segmentation(
     model.to(device)
     model.eval()
 
-    dataset = create_dataset(config, limit=validation_limit)
+    validation_offset = int(
+        checkpoint.get("validation_offset", config["split"]["train_volume_count"])
+    )
+    dataset = create_dataset(
+        config,
+        limit=validation_limit,
+        offset=validation_offset,
+    )
     loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
 
     roi_size = tuple(config["training"]["roi_size"])
@@ -68,30 +77,41 @@ def evaluate_segmentation(
                     mode="gaussian",
                 )
 
-            dice = dice_score(logits, targets)
+            cleaned_pred = post_process_mask(logits, threshold=0.5, keep_largest_component=True)
+            dice = dice_score(cleaned_pred, targets)
+            raw_dice = dice_score(logits, targets)
             target_pixels = int(targets.sum().item())
-            predicted_pixels = int((torch.sigmoid(logits) >= 0.5).sum().item())
+            raw_predicted_pixels = int((torch.sigmoid(logits) >= 0.5).sum().item())
+            predicted_pixels = int(cleaned_pred.sum().item())
 
             results.append(
                 {
                     "volume_index": index,
                     "dice": round(dice, 6),
+                    "raw_dice": round(raw_dice, 6),
                     "target_spleen_pixels": target_pixels,
                     "predicted_spleen_pixels": predicted_pixels,
+                    "raw_predicted_spleen_pixels": raw_predicted_pixels,
                     "image_shape": list(images.shape),
                 }
             )
 
             print(
-                f"Volume {index}: Dice={dice:.4f}, "
+                f"Volume {index}: Dice={dice:.4f} (Raw={raw_dice:.4f}), "
                 f"target pixels={target_pixels}, "
-                f"predicted pixels={predicted_pixels}"
+                f"cleaned pixels={predicted_pixels} (raw={raw_predicted_pixels})"
             )
 
     dice_values = [result["dice"] for result in results]
     report = {
         "checkpoint_path": checkpoint_path.as_posix(),
         "device": str(device),
+        "run_metadata": build_run_metadata(
+            command=command or ["programmatic segmentation evaluation"],
+            config_path=config_path,
+            checkpoint_path=checkpoint_path,
+            checkpoint=checkpoint,
+        ),
         "validation_volumes": len(results),
         "mean_dice": round(sum(dice_values) / len(dice_values), 6)
         if dice_values
@@ -136,6 +156,7 @@ def main() -> int:
             checkpoint_path=args.checkpoint,
             output_path=args.output,
             validation_limit=args.validation_limit,
+            command=sys.argv,
         )
     except (OSError, ValueError, KeyError, RuntimeError, yaml.YAMLError) as error:
         print(f"FAIL: {error}", file=sys.stderr)

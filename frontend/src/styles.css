@@ -1,0 +1,39 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #172033;
+  background: #f5f7fb;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+section {
+  margin-top: 1.5rem;
+  padding: 1.25rem;
+  background: white;
+  border: 1px solid #d8deea;
+  border-radius: 0.75rem;
+}
+
+button {
+  margin: 0.5rem 0.5rem 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+}
+
+li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.5rem 0;
+}
+
+img {
+  max-width: 100%;
+}

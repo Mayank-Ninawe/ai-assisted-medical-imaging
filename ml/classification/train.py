@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader
 
 from ml.classification.dataset import LABEL_COLUMNS, ChestXrayDataset
 from ml.classification.pilot import create_model
+from ml.run_metadata import build_run_metadata, write_run_metadata
 
 
 def build_loaders(
@@ -108,6 +109,7 @@ def train(
     train_limit: int | None,
     validation_limit: int | None,
     resume_checkpoint: Path | None,
+    command: list[str] | None = None,
 ) -> dict:
     with config_path.open("r", encoding="utf-8") as handle:
         config = yaml.safe_load(handle)
@@ -239,6 +241,21 @@ def train(
             torch.save(last_checkpoint, best_checkpoint_path)
             print(f"New best validation loss: {best_validation_loss:.4f}")
 
+    run_metadata = build_run_metadata(
+        command=command or ["programmatic training"],
+        config_path=config_path,
+        manifest_path=Path(config["dataset"]["manifest_file"]).with_name(
+            "nih_chestxray14_patient_splits.csv"
+        ),
+        checkpoint_path=best_checkpoint_path,
+        checkpoint={
+            "epoch": total_epochs,
+            "validation_loss": validation_loss,
+            "best_validation_loss": best_validation_loss,
+        },
+    )
+    write_run_metadata(output_dir / "run_metadata.json", run_metadata)
+
     return {
         "device": str(device),
         "epochs_completed": total_epochs,
@@ -246,6 +263,7 @@ def train(
         "best_validation_loss": best_validation_loss,
         "best_checkpoint": best_checkpoint_path.as_posix(),
         "last_checkpoint": last_checkpoint_path.as_posix(),
+        "run_metadata": run_metadata,
     }
 
 
@@ -280,6 +298,7 @@ def main() -> int:
             train_limit=args.train_limit,
             validation_limit=args.validation_limit,
             resume_checkpoint=args.resume,
+            command=sys.argv,
         )
     except (OSError, ValueError, KeyError, RuntimeError, yaml.YAMLError) as error:
         print(f"FAIL: {error}", file=sys.stderr)

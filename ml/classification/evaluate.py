@@ -25,12 +25,13 @@ from torch.utils.data import DataLoader
 
 from ml.classification.dataset import LABEL_COLUMNS, ChestXrayDataset
 from ml.classification.pilot import create_model
+from ml.run_metadata import build_run_metadata
 
 
 def load_model(
     checkpoint_path: Path,
     device: torch.device,
-) -> nn.Module:
+) -> tuple[nn.Module, dict]:
     """Load the best trained classifier checkpoint."""
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
@@ -45,7 +46,7 @@ def load_model(
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
     model.eval()
-    return model
+    return model, checkpoint
 
 
 def collect_predictions(
@@ -90,6 +91,7 @@ def compute_metrics(
         label_probabilities = probabilities[:, index]
         label_predictions = binary_predictions[:, index]
         positive_count = int(label_targets.sum())
+        has_both_classes = len(set(label_targets.tolist())) == 2
 
         if positive_count == 0:
             per_label[label] = {
@@ -104,10 +106,9 @@ def compute_metrics(
             }
             continue
 
-        per_label[label] = {
+        label_metrics = {
             "support_positive": positive_count,
             "prevalence": round(float(label_targets.mean()), 6),
-            "auroc": round(float(roc_auc_score(label_targets, label_probabilities)), 6),
             "average_precision": round(
                 float(average_precision_score(label_targets, label_probabilities)), 6
             ),
@@ -124,6 +125,17 @@ def compute_metrics(
                 6,
             ),
         }
+        if has_both_classes:
+            label_metrics["auroc"] = round(
+                float(roc_auc_score(label_targets, label_probabilities)), 6
+            )
+        else:
+            label_metrics["auroc"] = None
+            label_metrics["note"] = (
+                "Only one target class is present; AUROC is undefined for this subset."
+            )
+
+        per_label[label] = label_metrics
 
     defined_auroc = [
         metrics["auroc"]
@@ -155,6 +167,7 @@ def evaluate_checkpoint(
     output_path: Path,
     threshold: float,
     limit: int | None,
+    command: list[str] | None = None,
 ) -> dict:
     """Evaluate a checkpoint using the official held-out test split."""
     with config_path.open("r", encoding="utf-8") as handle:
@@ -169,7 +182,7 @@ def evaluate_checkpoint(
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = load_model(checkpoint_path, device)
+    model, checkpoint = load_model(checkpoint_path, device)
 
     test_dataset = ChestXrayDataset(
         manifest_path=split_manifest,
@@ -193,6 +206,13 @@ def evaluate_checkpoint(
     metrics = compute_metrics(logits, targets, threshold=threshold)
     metrics["checkpoint_path"] = checkpoint_path.as_posix()
     metrics["device"] = str(device)
+    metrics["run_metadata"] = build_run_metadata(
+        command=command or ["programmatic evaluation"],
+        config_path=config_path,
+        manifest_path=split_manifest,
+        checkpoint_path=checkpoint_path,
+        checkpoint=checkpoint,
+    )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as handle:
@@ -211,6 +231,7 @@ def evaluate_checkpoint(
                 "precision",
                 "recall",
                 "f1",
+                "note",
             ],
         )
         writer.writeheader()
@@ -252,6 +273,7 @@ def main() -> int:
             output_path=args.output,
             threshold=args.threshold,
             limit=args.limit,
+            command=sys.argv,
         )
     except (OSError, ValueError, KeyError, RuntimeError, yaml.YAMLError) as error:
         print(f"FAIL: {error}", file=sys.stderr)

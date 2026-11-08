@@ -13,13 +13,13 @@ from pathlib import Path
 
 import torch
 import yaml
-from monai.data import CacheDataset, DataLoader
+from monai.data import CacheDataset, DataLoader, Dataset
 from monai.inferers import sliding_window_inference
-from monai.losses import DiceLoss
+from monai.losses import DiceCELoss
 from monai.transforms import Compose, RandCropByPosNegLabeld
-from torch import nn
 
-from ml.segmentation.model import create_spleen_unet, dice_score
+from ml.run_metadata import build_run_metadata, write_run_metadata
+from ml.segmentation.model import create_spleen_unet, dice_score, post_process_mask
 from ml.segmentation.preprocessing import (
     IMAGE_KEY,
     LABEL_KEY,
@@ -29,18 +29,17 @@ from ml.segmentation.preprocessing import (
 )
 
 
-def build_training_transform(config: dict) -> Compose:
-    """Add a bounded positive/negative ROI crop to the preprocessing pipeline."""
+def build_dynamic_crop_transform(config: dict) -> Compose:
+    """Dynamic on-the-fly random positive/negative crop transform."""
     roi_size = config["training"]["roi_size"]
 
     return Compose(
         [
-            build_preprocessing_transforms(config),
             RandCropByPosNegLabeld(
                 keys=[IMAGE_KEY, LABEL_KEY],
                 label_key=LABEL_KEY,
                 spatial_size=roi_size,
-                pos=1.0,
+                pos=2.0,
                 neg=1.0,
                 num_samples=1,
                 image_key=IMAGE_KEY,
@@ -50,8 +49,13 @@ def build_training_transform(config: dict) -> Compose:
     )
 
 
-def create_training_dataset(config: dict, limit: int | None = None) -> CacheDataset:
-    """Create a crop-based training dataset from original NIfTI file pairs."""
+def build_training_transform(config: dict) -> Compose:
+    """Build the dynamic training crop transform."""
+    return build_dynamic_crop_transform(config)
+
+
+def create_training_dataset(config: dict, limit: int | None = None) -> Dataset:
+    """Create a decoupled training dataset: deterministic cache + dynamic crops."""
     dataset_config = config["dataset"]
 
     samples = list_volume_pairs(
@@ -67,12 +71,13 @@ def create_training_dataset(config: dict, limit: int | None = None) -> CacheData
     if not samples:
         raise ValueError("No training image/label pairs were found.")
 
-    return CacheDataset(
+    cached_ds = CacheDataset(
         data=samples,
-        transform=build_training_transform(config),
+        transform=build_preprocessing_transforms(config),
         cache_rate=1.0,
         num_workers=config["training"]["num_workers"],
     )
+    return Dataset(data=cached_ds, transform=build_dynamic_crop_transform(config))
 
 
 def train_segmentation(
@@ -81,6 +86,7 @@ def train_segmentation(
     epochs: int,
     train_limit: int | None,
     validation_limit: int | None,
+    command: list[str] | None = None,
 ) -> dict:
     """Train the spleen U-Net and evaluate Dice on whole validation volumes."""
     with config_path.open("r", encoding="utf-8") as handle:
@@ -89,8 +95,26 @@ def train_segmentation(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.backends.cudnn.benchmark = True
 
-    train_dataset = create_training_dataset(config, limit=train_limit)
-    validation_dataset = create_dataset(config, limit=validation_limit)
+    split_config = config["split"]
+    train_volume_count = train_limit or int(split_config["train_volume_count"])
+    validation_volume_count = validation_limit or int(
+        split_config["validation_volume_count"]
+    )
+    if train_volume_count <= 0 or validation_volume_count <= 0:
+        raise ValueError("Training and validation volume counts must be positive.")
+    if train_volume_count + validation_volume_count > len(
+        list_volume_pairs(
+            images_dir=Path(config["dataset"]["images_dir"]),
+            labels_dir=Path(config["dataset"]["labels_dir"]),
+        )
+    ):
+        raise ValueError("Training and validation volume counts exceed available data.")
+    train_dataset = create_training_dataset(config, limit=train_volume_count)
+    validation_dataset = create_dataset(
+        config,
+        limit=validation_volume_count,
+        offset=train_volume_count,
+    )
 
     train_loader = DataLoader(
         train_dataset,
@@ -111,8 +135,7 @@ def train_segmentation(
     model = create_spleen_unet().to(device)
     roi_size = tuple(config["training"]["roi_size"])
 
-    dice_loss = DiceLoss(sigmoid=True)
-    binary_cross_entropy = nn.BCEWithLogitsLoss()
+    loss_function = DiceCELoss(sigmoid=True, lambda_dice=1.0, lambda_ce=1.0)
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=float(config["training"]["learning_rate"]),
@@ -144,11 +167,11 @@ def train_segmentation(
                 enabled=device.type == "cuda",
             ):
                 logits = model(images)
-                loss = dice_loss(logits, targets) + binary_cross_entropy(
-                    logits, targets
-                )
+                loss = loss_function(logits, targets)
 
             scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             scaler.step(optimizer)
             scaler.update()
 
@@ -176,7 +199,10 @@ def train_segmentation(
                         mode="gaussian",
                     )
 
-                validation_dice_values.append(dice_score(logits, targets))
+                clean_pred = post_process_mask(
+                    logits, threshold=0.5, keep_largest_component=True
+                )
+                validation_dice_values.append(dice_score(clean_pred, targets))
 
         mean_validation_dice = (
             sum(validation_dice_values) / len(validation_dice_values)
@@ -210,6 +236,12 @@ def train_segmentation(
             "optimizer_state_dict": optimizer.state_dict(),
             "scaler_state_dict": scaler.state_dict(),
             "validation_dice": mean_validation_dice,
+            "loss": "dice_ce",
+            "train_volume_count": len(train_dataset),
+            "validation_volume_count": len(validation_dataset),
+            "validation_offset": train_volume_count,
+            "training_config": config["training"],
+            "split_config": split_config,
         }
         torch.save(checkpoint, last_checkpoint)
 
@@ -218,6 +250,17 @@ def train_segmentation(
             torch.save(checkpoint, best_checkpoint)
             print(f"New best validation Dice: {best_validation_dice:.4f}")
 
+    run_metadata = build_run_metadata(
+        command=command or ["programmatic segmentation training"],
+        config_path=config_path,
+        checkpoint_path=best_checkpoint,
+        checkpoint={
+            "epoch": epochs,
+            "validation_dice": best_validation_dice,
+        },
+    )
+    write_run_metadata(output_dir / "run_metadata.json", run_metadata)
+
     return {
         "device": str(device),
         "epochs": epochs,
@@ -225,6 +268,7 @@ def train_segmentation(
         "best_validation_dice": best_validation_dice,
         "best_checkpoint": best_checkpoint.as_posix(),
         "last_checkpoint": last_checkpoint.as_posix(),
+        "run_metadata": run_metadata,
     }
 
 
@@ -257,6 +301,7 @@ def main() -> int:
             epochs=epochs,
             train_limit=args.train_limit,
             validation_limit=args.validation_limit,
+            command=sys.argv,
         )
     except (OSError, ValueError, KeyError, RuntimeError, yaml.YAMLError) as error:
         print(f"FAIL: {error}", file=sys.stderr)

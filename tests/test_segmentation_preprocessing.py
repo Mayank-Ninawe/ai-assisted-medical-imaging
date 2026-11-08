@@ -103,6 +103,22 @@ def test_preprocessing_preserves_image_mask_alignment(tmp_path: Path, spleen_con
     assert set(torch.unique(sample[LABEL_KEY]).tolist()).issubset({0.0, 1.0})
 
 
+def test_create_dataset_supports_non_overlapping_offset(tmp_path: Path, spleen_config):
+    images_dir = tmp_path / "images"
+    labels_dir = tmp_path / "labels"
+    images_dir.mkdir()
+    labels_dir.mkdir()
+
+    create_nifti_pair(tmp_path, "spleen_01")
+    create_nifti_pair(tmp_path, "spleen_02")
+    spleen_config["dataset"]["images_dir"] = str(images_dir)
+    spleen_config["dataset"]["labels_dir"] = str(labels_dir)
+
+    dataset = create_dataset(spleen_config, limit=1, offset=1)
+
+    assert Path(dataset.data[0][IMAGE_KEY]).name == "spleen_02.nii.gz"
+
+
 def test_validate_sample_rejects_misaligned_shapes():
     sample = {
         IMAGE_KEY: torch.randn(1, 16, 16, 12),

@@ -10,11 +10,11 @@
 
 # 
 
-# \*\*Status: Planning and early setup.\*\*
+# \*\*Status: Implemented educational prototype with verified limits.\*\*
 
 # 
 
-# This repository is for an internship project to build an educational demonstration of AI-assisted medical-image workflows. Features described below are planned; they should not be considered implemented until the code and tests are present.
+# This repository is for an internship project to build an educational demonstration of AI-assisted medical-image workflows. The current prototype includes a tested Python/ML workflow, FastAPI service, React frontend, local SQLite review persistence, and DICOM/Orthanc integration boundaries. The local Docker Compose stack and Orthanc flow were live-validated on 2026-11-08.
 
 # 
 
@@ -40,7 +40,7 @@
 
 # 
 
-# \## Planned capabilities
+# \## Current capabilities and verified limits
 
 # 
 
@@ -62,7 +62,7 @@
 
 # 
 
-# These are project goals, not claims that the features are already available.
+# The classification checkpoint, Grad-CAM path, Docker Compose stack, and local Orthanc flow are exercised by automated tests and live local smoke tests. Segmentation remains a research prototype: the corrected held-out evaluation and bounded pilot showed poor Dice and severe over-segmentation, so it must not be presented as reliable.
 
 # 
 
@@ -134,7 +134,7 @@
 
 # 
 
-# \## Current setup
+# \## Local setup
 
 # 
 
@@ -150,7 +150,9 @@
 
 # 
 
-# Environment and dependency setup instructions will be added after the initial project setup phase. Do not assume that model training, DICOM integration, or deployment is currently working.
+# Install Python dependencies with `python -m pip install -e ".[dev,backend,ml]"`, then run `python -m pytest -q` and `python -m ruff check backend ml tests`. The frontend can be validated with `Set-Location frontend; npm ci`, `npm test`, and `npm run build`.
+#
+# A local container configuration is available through `docker compose config` and `docker compose up --build`. It expects a classification checkpoint at `models/classification/best_classifier.pt`; model and dataset files are intentionally mounted from the host rather than copied into images. The stack was live-validated locally on 2026-11-08, but this is not evidence of production deployment or clinical readiness.
 
 # 
 
@@ -159,4 +161,3 @@
 # 
 
 # The repository's code license and any dataset terms must be reviewed and documented separately. A code license does not grant permission to redistribute or use third-party medical datasets.
-

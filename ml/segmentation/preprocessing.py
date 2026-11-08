@@ -136,6 +136,7 @@ def list_volume_pairs(images_dir: Path, labels_dir: Path) -> list[dict[str, str]
 def create_dataset(
     config: dict,
     limit: int | None = None,
+    offset: int = 0,
 ) -> CacheDataset:
     """Create a cached MONAI dataset for bounded spleen segmentation pilots."""
     dataset_config = config["dataset"]
@@ -143,6 +144,11 @@ def create_dataset(
         images_dir=Path(dataset_config["images_dir"]),
         labels_dir=Path(dataset_config["labels_dir"]),
     )
+
+    if offset < 0:
+        raise ValueError("offset must not be negative.")
+    if offset:
+        samples = samples[offset:]
 
     if limit is not None:
         if limit <= 0:

@@ -28,6 +28,18 @@ def test_compute_metrics_handles_label_without_positives():
     assert "No positive test samples" in hernia_metrics["note"]
 
 
+def test_compute_metrics_handles_label_without_negatives():
+    logits = torch.randn(8, len(LABEL_COLUMNS))
+    targets = torch.ones(8, len(LABEL_COLUMNS))
+
+    metrics = compute_metrics(logits, targets, threshold=0.5)
+    hernia_metrics = metrics["per_label"]["Hernia"]
+
+    assert hernia_metrics["support_positive"] == 8
+    assert hernia_metrics["auroc"] is None
+    assert "Only one target class" in hernia_metrics["note"]
+
+
 def test_compute_metrics_perfect_classifier():
     targets = torch.zeros(32, len(LABEL_COLUMNS))
     targets[:16, 1] = 1.0
